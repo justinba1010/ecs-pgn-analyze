@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""
+README:
+Requirements:
+"""
+import argparse
+import chess
+import chess.pgn
+import math
+import requests
+import time
+import io
+from collections import defaultdict
+from subprocess import check_output
+from stockfish import Stockfish
+
+def pgn_from_moves(moves, **kwargs):
+  game = chess.pgn.Game()
+  node = game
+  end = kwargs.get("end")
+  white_accs = []
+  black_accs = []
+  if end:
+    game.headers["Result"] = "1/2 1/2"
+  if kwargs.get("headers"):
+    game.headers = kwargs["headers"]
+  else:
+    for (key, value) in kwargs["sheaders"].items():
+      game.headers[key] = value
+  for i, move in enumerate(moves):
+    if isinstance(move.get("Move"), str):
+      node = node.add_main_variation(chess.Move.from_uci(move.get("Move")))
+    else:
+      node = node.add_main_variation(move.get("Move"))
+    node.comment = get_comment(i, moves)
+    if i % 2 == 0 and (move := moves[i].get("Centipawn")) and (move_prev := moves[i-1].get("Centipawn")):
+      # White
+      white_acc = acc(win(move), win(move_prev) if i != 0 else 50)
+      white_accs.append(white_acc)
+    elif (move := moves[i].get("Centipawn")) and (move_prev := moves[i-1].get("Centipawn")):
+      black_acc = acc(win(move), win(move_prev))
+      black_accs.append(black_acc)
+  white_acc = sum(white_accs)/len(white_accs)
+  black_acc = sum(black_accs)/len(black_accs)
+  acc_str = "White Accuracy: {}%; Black Accuracy: {}%".format(white_acc, black_acc)
+  return str(game) + ("" if end == None else "{ " + end + " }") + "\n{ " + acc_str + " }"
+
+def format_eval(move):
+  if (e :=move.get("Mate")):
+    return "#{}".format(e)
+  else:
+    return str(move.get("Centipawn")/100)
+
+def win(centipawn):
+  # https://lichess.org/page/accuracy
+  print(centipawn)
+  return 0.5 + 0.5 * (2 / (1 + math.exp(-0.00368208 * centipawn)) - 1)
+
+def accuracy(win_before, win_after):
+  return 1.031668 * math.exp(-4.354 * (win_before - win_after)) - 0.031669
+
+def acc(move, move_prev):
+  before = win(move)
+  after = win(move_prev)
+  return accuracy(before, after) if before - after > 0 else accuracy(after, before)
+
+def cpQ(centipawn):
+  # https://zwischenzug.substack.com/p/centipawns-suck
+  return 25/39*math.atan(10*centipawn/1117)
+
+def get_comment(i, moves):
+  if i == 0:
+    return
+
+  if moves[i].get("Mate") and moves[i-1].get("Centipawn"):
+    return "Forced mate {} -> {}".format(format_eval(moves[i-1]), format_eval(moves[i]))
+  if moves[i].get("Centipawn") and moves[i-1].get("Mate"):
+    return "Lost forced mate {} -> {}".format(format_eval(moves[i-1]), format_eval(moves[i]))
+  if (move := moves[i].get("Centipawn")) and (move_prev := moves[i-1].get("Centipawn")):
+    before = win(move)
+    after = win(move_prev)
+    accu = acc(win(move), win(move_prev))
+    if accu < 1:
+      return "Blunder {} -> {}; Accuracy: {}; Before: {}; After: {}".format(format_eval(moves[i-1]), format_eval(moves[i]), accu, before, after)
+
+def main():
+  parser = argparse.ArgumentParser(description=
+    """
+    Justin's Chess Tool
+    """, formatter_class=argparse.RawTextHelpFormatter
+  )
+  parser.add_argument("--depth", type=int, default=15, action="store", required=False)
+  parser.add_argument("--hash", type=int, default=1536, action="store", required=False)
+  parser.add_argument("--url")
+  parser.add_argument("--threads", type=int, default=4)
+  parser.add_argument("--starting_pos", type=str, default=[])
+  args = parser.parse_args()
+  stockfish = Stockfish(path="/stockfish/stockfish", depth=args.depth, parameters={"Threads": args.threads, "Minimum Thinking Time": 1000, "Hash": args.hash})
+  if args.url:
+    game = chess.pgn.read_game(get_pgn_from_url(args.url))
+    headers = game.headers
+    moves = list(evaluate_game(stockfish, game))
+    print(pgn_from_moves(moves, end=None, headers=headers))
+  else:
+    start_moves = []
+    if args.starting_pos:
+      start_moves = args.starting_pos.split(" ")
+    headers = {
+        "Event": "Stockfish on M1 Macbook Air; Depth={}; Threads: {}".format(args.depth, args.threads),
+        "Date": "2022.09.18",
+        "White": "Stockfish",
+        "Black": "Stockfish",
+        }
+    game, end = play_game(stockfish, start_moves)
+    print(pgn_from_moves(game, end=end, sheaders=headers))
+
+def play_game(stockfish, start_moves=[]):
+  boards = defaultdict(int)
+  moves = []
+  for move in start_moves:
+    moves.append(make_move_with_eval(stockfish, move))
+  while True:
+    boards[get_position_from_fen(stockfish)] += 1
+    engine_moves = stockfish.get_top_moves(1)
+    if len(engine_moves) == 0:
+      return moves, None
+    move = engine_moves[0]
+    moves.append(move)
+    if boards[get_position_from_fen(stockfish)] == 3:
+      return moves, "Draw by Repetition"
+    if insufficient_material(stockfish):
+      return moves, "Insufficient Materials"
+    stockfish.make_moves_from_current_position([move.get("Move")])
+  return moves, None
+
+def make_move_with_eval(stockfish, move):
+  new_move = {"Move": move}
+  stockfish.make_moves_from_current_position([move])
+  ev = stockfish.get_evaluation()
+  if ev.get("type") == "cp":
+    new_move["Centipawn"] = ev.get("value")
+    new_move["Mate"] = None
+  else:
+    new_move["Centipawn"] = None
+    new_move["Mate"] = ev.get("value")
+  return new_move
+
+def evaluate_game(stockfish, game):
+  return map(lambda move: make_move_with_eval(stockfish, move), game.mainline_moves())
+
+def get_position_from_fen(stockfish):
+  return stockfish.get_fen_position().split(' ')[0]
+
+def insufficient_material(stockfish):
+  board = get_position_from_fen(stockfish)
+  if any(map(lambda x: x in board, list("pPqQrR"))):
+    return False
+  if board.count("b") == 2:
+    return False
+  if board.count("B") == 2:
+    return False
+  if board.count("B") > 1 and board.count("N") > 1:
+    return False
+  if board.count("b") > 1 and board.count("N") > 1:
+    return False
+  return True
+
+def get_pgn_from_url(url):
+  response = requests.get(url).text
+  return io.StringIO(response)
+
+if __name__ == "__main__":
+  main()

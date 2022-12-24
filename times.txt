@@ -1,0 +1,15 @@
+docker run -it stockfish --depth 3 > /dev/null  0.03s user 0.02s system 5% cpu 0.941 total
+➜  stockfish time docker run -it stockfish --depth 5 > /dev/null
+docker run -it stockfish --depth 5 > /dev/null  0.03s user 0.02s system 5% cpu 1.036 total
+➜  stockfish time docker run -it stockfish --depth 10 > /dev/null 
+docker run -it stockfish --depth 10 > /dev/null  0.03s user 0.02s system 3% cpu 1.353 total
+➜  stockfish time docker run -it stockfish --depth 15 > /dev/null 
+docker run -it stockfish --depth 15 > /dev/null  0.03s user 0.02s system 1% cpu 4.973 total
+➜  stockfish time docker run -it stockfish --depth 20 > /dev/null  
+docker run -it stockfish --depth 20 > /dev/null  0.03s user 0.02s system 0% cpu 36.975 total
+➜  stockfish time docker run -it stockfish --depth 21 > /dev/null 
+docker run -it stockfish --depth 21 > /dev/null  0.03s user 0.02s system 0% cpu 34.486 total
+➜  stockfish time docker run -it stockfish --depth 25 > /dev/null 
+docker run -it stockfish --depth 25 > /dev/null  0.03s user 0.05s system 0% cpu 2:19.72 total
+➜  stockfish time docker run -it stockfish --depth 30 > /dev/null
+docker run -it stockfish --depth 30  0.07s user 0.08s system 0% cpu 13:00.86 total
