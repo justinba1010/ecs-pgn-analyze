@@ -74,11 +74,15 @@ def main():
 
 def evaluate_game(stockfish, game):
     return map(lambda move: make_move_with_eval(stockfish, move),
-               game.mainline_moves())
+               game.mainline())
 
 
-def make_move_with_eval(stockfish, move):
+def make_move_with_eval(stockfish, line):
+    move = line.move
+    comment = line.comment
     new_move = {"Move": move}
+    if comment and comment != "":
+        new_move["Comment"] = comment
     old_ev = stockfish.get_evaluation()
     turn = is_white_turn_from_fen(stockfish)
     stockfish.make_moves_from_current_position([move])
@@ -106,8 +110,10 @@ def annotate_game(game, stockfish):
     black_accuracy = harmonic_mean(
         map(lambda move: move.get("Accuracy") or 0, black_moves))
     annotated_game = write_pgn(moves, headers)
-    annotated_game.headers["ZA_White_Accuracy"] = "%.3f" % white_accuracy
-    annotated_game.headers["ZB_Black_Accuracy"] = "%.3f" % black_accuracy
+    annotated_game.headers["ZAWhiteAccuracy"] = "{:.1f}%".format(
+        white_accuracy * 100)
+    annotated_game.headers["ZBBlackAccuracy"] = "{:.1f}%".format(
+        black_accuracy * 100)
     return annotated_game
 
 
@@ -141,8 +147,10 @@ def is_white_turn_from_fen(stockfish):
 
 def get_comment(move):
     accuracy = move.get("Accuracy")
+    if accuracy < 0.7:
+        return "Mistake; Accuracy: {:.0f}%".format(accuracy * 100)
     if accuracy < 0.5:
-        return "Blunder; Accuracy: %.2f" % accuracy
+        return "Blunder; Accuracy: {:.0f}%".format(accuracy * 100)
 
 
 def write_pgn(moves, headers):
@@ -151,8 +159,13 @@ def write_pgn(moves, headers):
     node = game
     for move in moves:
         node = node.add_variation(move.get("Move"))
-        if comment := get_comment(move):
-            node.comment = comment
+        comment = move.get("Comment")
+        if added_comment := get_comment(move):
+            if comment is None:
+                comment = added_comment
+            else:
+                comment += ";    {}".format(added_comment)
+        node.comment = comment
     return game
 
 
